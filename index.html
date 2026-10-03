@@ -213,25 +213,13 @@ button:disabled{cursor:not-allowed}
       <button class="tab" id="signupTab">Create account</button>
     </div>
     <h1 id="authTitle">Welcome back 👋</h1>
-    <div id="usernameField" class="field" style="display:none">
-      <label>Username</label><input id="username" maxlength="20" autocomplete="nickname" placeholder="AcoinPlayer">
+    <div class="notice">Only a username and password are needed.</div>
+    <div class="field">
+      <label>Username</label><input id="username" maxlength="20" autocomplete="username" placeholder="AcoinPlayer">
     </div>
-    <div class="field"><label>Email</label><input id="email" type="email" autocomplete="email" placeholder="you@example.com"></div>
     <div class="field"><label>Password</label><input id="password" type="password" autocomplete="current-password" placeholder="••••••••"></div>
     <button class="primary" id="authBtn">Login</button>
-    <button class="linkBtn" id="forgotBtn" type="button">Forgot password?</button>
     <div class="msg" id="authMsg"></div>
-  </div>
-</div>
-
-<div class="panel hidden" id="recoveryPanel">
-  <div class="panelbox">
-    <div class="section-title"><h2>🔐 Set a new password</h2></div>
-    <div class="notice">Choose a new password with at least 6 characters.</div>
-    <div class="field"><label>New password</label><input id="newPassword" type="password" autocomplete="new-password"></div>
-    <div class="field"><label>Confirm password</label><input id="newPassword2" type="password" autocomplete="new-password"></div>
-    <button class="primary" id="savePasswordBtn">Save new password</button>
-    <div class="msg" id="recoveryMsg"></div>
   </div>
 </div>
 
@@ -266,9 +254,20 @@ button:disabled{cursor:not-allowed}
     <div class="setting-grid">
       <div class="setting"><div><b>Click sounds</b><div class="status">Tiny browser sound effects</div></div><input class="switch" id="soundToggle" type="checkbox" checked></div>
       <div class="setting"><div><b>Autosave</b><div class="status">Online save every few seconds</div></div><span class="status ok">ON</span></div>
-      <div class="setting"><div><b>Account</b><div class="status" id="accountEmail">—</div></div><button class="ghost small" id="logout2">Logout</button></div>
+      <div class="setting"><div><b>Account</b><div class="status" id="accountUsername">—</div></div><div class="actions"><button class="ghost small" id="changePasswordBtn">Change password</button><button class="ghost small" id="logout2">Logout</button></div></div>
       <div class="setting"><div><b>Reset game progress</b><div class="status">Only your game progress resets, not your account.</div></div><button class="danger" id="resetGame">Reset</button></div>
     </div>
+  </div>
+</div>
+
+<div class="panel" id="passwordPanel" style="display:none">
+  <div class="panelbox">
+    <div class="section-title"><h2>🔐 Change password</h2><button class="ghost small" data-close="passwordPanel">✕</button></div>
+    <div class="field"><label>Current password</label><input id="currentPassword" type="password" autocomplete="current-password"></div>
+    <div class="field"><label>New password</label><input id="changePassword" type="password" autocomplete="new-password"></div>
+    <div class="field"><label>Confirm new password</label><input id="changePassword2" type="password" autocomplete="new-password"></div>
+    <button class="primary" id="changePasswordSave">Save password</button>
+    <div class="msg" id="passwordMsg"></div>
   </div>
 </div>
 
@@ -452,7 +451,7 @@ async function loadGame(){
   }
   const profile=await sb.from("profiles").select("username").eq("id",currentUser.id).maybeSingle();
   $("userName").textContent=profile.data?.username||currentUser.email?.split("@")[0]||"Player";
-  $("accountEmail").textContent=currentUser.email||"—";
+  $("accountUsername").textContent=profile.data?.username||authUserNameFallback();
   render();setSaveStatus("Loaded ✓",true);
 }
 function loadLeaderboard(){
@@ -509,58 +508,75 @@ $("settingsBtn").onclick=()=>openPanel("settingsPanel");
 document.querySelectorAll("[data-close]").forEach(b=>b.onclick=()=>closePanel(b.dataset.close));
 ["themePanel","shopPanel","settingsPanel"].forEach(id=>$(id).addEventListener("click",e=>{if(e.target.id===id)closePanel(id)}));
 
-function setMode(m){
-  mode=m;$("loginTab").classList.toggle("active",m==="login");$("signupTab").classList.toggle("active",m==="signup");
-  $("usernameField").style.display=m==="signup"?"block":"none";
-  $("authTitle").textContent=m==="login"?"Welcome back 👋":"Create your Acoin account 🪙";
-  $("authBtn").textContent=m==="login"?"Login":"Create account";$("authMsg").textContent="";
-  $("password").autocomplete=m==="login"?"current-password":"new-password";
+function cleanUsername(value){
+  return value.trim().normalize("NFKC");
 }
-$("loginTab").onclick=()=>setMode("login");$("signupTab").onclick=()=>setMode("signup");
+function validUsername(value){
+  return value.length>=3 && value.length<=20;
+}
+function usernameAlias(username){
+  const normalized=cleanUsername(username).toLowerCase();
+  const bytes=new TextEncoder().encode(normalized);
+  let binary="";
+  for(const b of bytes)binary+=String.fromCharCode(b);
+  const encoded=btoa(binary).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/g,"");
+  return `u_${encoded}@acoin-login.invalid`;
+}
+function setMode(m){
+  mode=m;$('loginTab').classList.toggle('active',m==='login');$('signupTab').classList.toggle('active',m==='signup');
+  $('authTitle').textContent=m==='login'?'Welcome back 👋':'Create your Acoin account 🪙';
+  $('authBtn').textContent=m==='login'?'Login':'Create account';$('authMsg').textContent='';
+  $('password').autocomplete=m==='login'?'current-password':'new-password';
+}
+$('loginTab').onclick=()=>setMode('login');$('signupTab').onclick=()=>setMode('signup');
 
-$("forgotBtn").onclick=async()=>{
-  const email=$("email").value.trim();
-  if(!email){$("authMsg").textContent="Enter your email first.";return}
-  $("authMsg").textContent="Sending reset email…";
-  const redirectTo=location.protocol.startsWith("http")?location.href.split("#")[0]:"";
-  const options=redirectTo?{redirectTo}:{};
-  const {error}=await sb.auth.resetPasswordForEmail(email,options);
-  if(error)$("authMsg").textContent=error.message;
-  else $("authMsg").textContent="Reset email sent. Check your inbox and spam folder.";
-};
-
-$("savePasswordBtn").onclick=async()=>{
-  const a=$("newPassword").value,b=$("newPassword2").value;
-  if(a.length<6){$("recoveryMsg").textContent="Password must be at least 6 characters.";return}
-  if(a!==b){$("recoveryMsg").textContent="Passwords do not match.";return}
-  $("recoveryMsg").textContent="Updating password…";
-  const {error}=await sb.auth.updateUser({password:a});
-  if(error){$("recoveryMsg").textContent=error.message;return}
-  $("recoveryMsg").textContent="Password updated. ✅";
-  setTimeout(()=>closePanel("recoveryPanel"),900);
-};
-
-$("authBtn").onclick=async()=>{
-  const email=$("email").value.trim(),password=$("password").value,username=$("username").value.trim();
-  $("authMsg").textContent="Working…";
-  if(!email||!password){$("authMsg").textContent="Enter email and password.";return}
-  if(mode==="signup"){
-    if(username.length<3){$("authMsg").textContent="Username needs at least 3 characters.";return}
+$('authBtn').onclick=async()=>{
+  const username=cleanUsername($('username').value),password=$('password').value;
+  $('authMsg').textContent='Working…';
+  if(!validUsername(username)){$('authMsg').textContent='Username must be 3–20 characters.';return}
+  if(!password || password.length<6){$('authMsg').textContent='Password must be at least 6 characters.';return}
+  const email=usernameAlias(username);
+  if(mode==='signup'){
     const {data,error}=await sb.auth.signUp({email,password,options:{data:{username}}});
-    if(error){$("authMsg").textContent=error.message;return}
-    if(data.session){toast("Account created!");}
-    else $("authMsg").textContent="Account created. Check your email if confirmation is enabled.";
+    if(error){
+      $('authMsg').textContent=/already registered|already exists/i.test(error.message)?'That username is already taken.':error.message;
+      return;
+    }
+    if(data.session){toast('Account created! 🪙');}
+    else {$('authMsg').textContent='Account created. Supabase email confirmation must be OFF for username-only accounts.';}
   }else{
     const {error}=await sb.auth.signInWithPassword({email,password});
-    if(error){$("authMsg").textContent="Invalid login credentials.";return}
+    if(error){$('authMsg').textContent='Invalid username or password.';return}
   }
 };
+
+async function changePassword(){
+  if(!currentUser)return;
+  const username=cleanUsername(state?($('accountUsername').textContent||authUserNameFallback()):authUserNameFallback());
+  const current=$('currentPassword').value,newPass=$('changePassword').value,confirm=$('changePassword2').value;
+  $('passwordMsg').textContent='Working…';
+  if(!current){$('passwordMsg').textContent='Enter your current password.';return}
+  if(newPass.length<6){$('passwordMsg').textContent='New password must be at least 6 characters.';return}
+  if(newPass!==confirm){$('passwordMsg').textContent='Passwords do not match.';return}
+  const email=usernameAlias(username);
+  const {error:reauthError}=await sb.auth.signInWithPassword({email,password:current});
+  if(reauthError){$('passwordMsg').textContent='Current password is incorrect.';return}
+  const {error}=await sb.auth.updateUser({password:newPass});
+  if(error){$('passwordMsg').textContent=error.message;return}
+  $('passwordMsg').textContent='Password updated. ✅';
+  $('currentPassword').value='';$('changePassword').value='';$('changePassword2').value='';
+  toast('Password changed! 🔐');setTimeout(()=>closePanel('passwordPanel'),900);
+}
+$('changePasswordBtn').onclick=()=>openPanel('passwordPanel');
+$('changePasswordSave').onclick=changePassword;
+
+function authUserNameFallback(){return currentUser?.user_metadata?.username||currentUser?.email?.split('@')[0]||'Player'}
 
 async function logout(){
   await saveGame();await sb.auth.signOut();
 }
-$("logoutBtn").onclick=logout;$("logout2").onclick=logout;
-$("refreshBoard").onclick=loadLeaderboard;
+$('logoutBtn').onclick=logout;$('logout2').onclick=logout;
+$('refreshBoard').onclick=loadLeaderboard;
 
 $("soundToggle").checked=localStorage.getItem("acoin-sound")!=="off";
 $("soundToggle").onchange=()=>localStorage.setItem("acoin-sound",$("soundToggle").checked?"on":"off");
@@ -573,13 +589,12 @@ $("resetGame").onclick=async()=>{
 };
 
 sb.auth.onAuthStateChange(async(event,session)=>{
-  if(event==="PASSWORD_RECOVERY"){openPanel("recoveryPanel")}
   currentUser=session?.user||null;
   if(currentUser){
     $("auth").classList.add("hidden");$("logoutBtn").style.display="";await loadGame();loadLeaderboard();
   }else{
     $("auth").classList.remove("hidden");$("logoutBtn").style.display="none";$("userName").textContent="Not logged in";
-    $("accountEmail").textContent="—";state=null;setSaveStatus("Not logged in");
+    $("accountUsername").textContent="—";state=null;setSaveStatus("Not logged in");
   }
 });
 
